@@ -1,15 +1,9 @@
 {
-  "name": "@tamago89/slmpjs",
+  "name": "@tamago89/tgojs",
   "version": "1.0.0",
   "description": "Native javascript version of melsec communication protocol",
   "main": "index.js",
-  "scripts": {
-    "test": "jest"
-  },
   "bin": {},
-  "jest": {
-    "rootDir": "lib"
-  },
   "keywords": [
     "mitsubishi",
     "melsec",
@@ -24,11 +18,13 @@
     }
   ],
   "license": "Apache-2.0",
-  "devDependencies": {
-    "jest": "^30.0.0"
-  },
+  "devDependencies": {},
   "repository": {
     "type": "git",
-    "url": "https://github.com/TamaGO89/cmc_melsec.git"
+    "url": "https://github.com/TamaGO89/tgojs.git"
+  },
+  "dependencies": {
+    "@tamago89/canboatjs": "^2.12.1-fork.0",
+    "@tamago89/slmpjs": "^1.1.1"
   }
 }

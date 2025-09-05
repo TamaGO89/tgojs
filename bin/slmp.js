@@ -1,6 +1,10 @@
- const TGO = require("../lib/tgo");
-const { load_worksheet, load_json, combine_sheets, ProtocolBuffer, parse_protocol_buffer_schema, parse_callback } = require("../lib/utils");
-const slmp = require("/home/tamago/cmc_ws/cmc_melsec/index");
+const TGO = require("../lib/tgo");
+const { load_json, ProtocolBuffer, parse_protocol_buffer_schema, parse_callback } = require("../lib/utils");
+const slmp = require("@tamago89/slmpjs");
+const { parse_args, get_xlsx_config } = require("../lib/exec");
+const sys_argv = parse_args(process.argv.slice(2));
+if (!sys_argv.node_name) sys_argv.node_name = "slmp";
+const xlsx_config = get_xlsx_config(sys_argv,process.env);
 
 
 const SLMP_TO_PB = {
@@ -18,7 +22,7 @@ const SLMP_TO_PB = {
 
 class TGO_SLMP extends TGO {
     constructor() {
-        super("slmp", "/home/tamago/cmc_ws/xml/Book1.xlsx");
+        super(sys_argv, xlsx_config);
         // update the received variables in a single list
         this.loadVariables();
         this.loadReads();
@@ -61,7 +65,7 @@ class TGO_SLMP extends TGO {
             this.advertise(topic.protobuf.name,topic.protobuf.schema,topic.protobuf.encoder,{options:topic.options});
             if (!topic.rate)
                 continue;
-            if (!Object.hasOwn(this.intervals,topic.rate))
+            if (!this.intervals[topic.rate])
                 this.intervals[topic.rate] = {topics: []};
             this.intervals[topic.rate].topics.push(topic.protobuf.name);
         }

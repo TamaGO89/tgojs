@@ -1,7 +1,11 @@
 const TGO = require("../lib/tgo");
-const { load_worksheet, load_json, combine_sheets, ProtocolBuffer, parse_protocol_buffer_schema, parse_callback } = require("../lib/utils");
-const n2k = require("/home/tamago/cmc_ws/cmc-canboatjs/index");
-const { getPgnById, getPgn0 } = require("/home/tamago/cmc_ws/cmc-canboatjs/lib/pgns");
+const { ProtocolBuffer, parse_protocol_buffer_schema, parse_callback } = require("../lib/utils");
+const n2k = require("@tamago89/canboatjs");
+const { getPgnById, getPgn0 } = require("tamago89/canboatjs/lib/pgns");
+const { parse_args, get_xlsx_config } = require("../lib/exec");
+const sys_argv = parse_args(process.argv.slice(2));
+if (!sys_argv.node_name) sys_argv.node_name = "n2k";
+const xlsx_config = get_xlsx_config(sys_argv,process.env);
 
 
 function N2K_TO_MQTT({Id, BitLength, Resolution, Signed, FieldType}) {
@@ -48,7 +52,7 @@ function N2K_TO_MQTT({Id, BitLength, Resolution, Signed, FieldType}) {
 
 class TGO_N2K extends TGO {
     constructor() {
-        super("n2k", "/home/tamago/cmc_ws/xml/BookN2K.xlsx");
+        super(sys_argv, xlsx_config);
         // update the received variables in a single list
         if (!this.options.n2k.receiveIDs) this.options.n2k.receiveIDs = [];
         if (!this.options.n2k.receivePGNs) this.options.n2k.receivePGNs = [];
@@ -96,14 +100,14 @@ class TGO_N2K extends TGO {
                 this.options.n2k.receiveIDs.push(pgn_info.Id);
             if (this.options.n2k.receivePGNs.indexOf(pgn_info.PGN) < 0)
                 this.options.n2k.receivePGNs.push(pgn_info.PGN);
-            if (!Object.hasOwn(this.pub_topics,receive.topicname))
+            if (!this.pub_topics[receive.topicname])
                 this.pub_topics[receive.topicname] = {protobuf: new ProtocolBuffer(receive.topicname)};
             const topic = this.pub_topics[receive.topicname];
             for (const field of pgn_info.Fields) 
                 topic.protobuf.addVariable(N2K_TO_MQTT(field));
-            if (!Object.hasOwn(this.recv_pgns,receive.pgn))
+            if (!this.recv_pgns[receive.pgn])
                 this.recv_pgns[receive.pgn] = {};
-            if (!Object.hasOwn(this.recv_pgns[receive.pgn],receive.source))
+            if (!this.recv_pgns[receive.pgn][receive.source])
                 this.recv_pgns[receive.pgn][receive.source] = {
                     topics: [],
                     data: {},
@@ -114,14 +118,14 @@ class TGO_N2K extends TGO {
                 source_pgn.topics.push({name:receive.topicname,trigger:receive.trigger});
         }
         for (const advertise of this.options.n2k.advertise) {
-            if (!Object.hasOwn(this.pub_topics,advertise.topicname))
+            if (!this.pub_topics[advertise.topicname])
                 this.pub_topics[advertise.topicname] = {protobuf: new ProtocolBuffer(advertise.topicname)};
             const topic = this.pub_topics[advertise.topicname];
             topic.options = advertise.options ? advertise.options : null;
             if (!advertise.rate)
                 continue;
             topic.rate = advertise.rate;
-            if (!Object.hasOwn(this.intervals,topic.rate))
+            if (!this.intervals[topic.rate])
                 this.intervals[topic.rate] = {topics: [], pgns: []};
             this.intervals[topic.rate].topics.push(advertise.topicname);
         }
@@ -158,7 +162,7 @@ class TGO_N2K extends TGO {
                 if (this.options.n2k.transmitPGNs.indexOf(pgn_info.PGN) < 0)
                     this.options.n2k.transmitPGNs.push(pgn_info.PGN);
             }
-            if (!Object.hasOwn(this.sub_topics,sub.publisher))
+            if (!this.sub_topics[sub.publisher])
                 this.sub_topics[sub.publisher] = {};
             this.sub_topics[sub.publisher][sub.topicname] = {
                 pgns: sub.pgns,
@@ -175,7 +179,7 @@ class TGO_N2K extends TGO {
             Object.assign(this.trns_pgns[pgn_info.Id],{dst: options.destination, prio: options.priority, rate: options.rate});
             if (!options.rate)
                 continue;
-            if (!Object.hasOwn(this.intervals,options.rate))
+            if (!this.intervals[options.rate])
                 this.intervals[options.rate] = {topics: [], pgns: []};
             this.intervals[options.rate].pgns.push(pgn_info.Id);
         }

@@ -1,8 +1,12 @@
 const TGO = require("../lib/tgo");
-const { load_worksheet, load_json, write_json, combine_sheets, ProtocolBuffer, load_schema_codecs, parse_protocol_buffer_schema, parse_callback } = require("../lib/utils");
+const { load_json, write_json, load_schema_codecs, parse_protocol_buffer_schema } = require("../lib/utils");
 const fs = require('fs');
 const xxhash = require("xxhashjs");
 const path = require("path");
+const { parse_args, get_xlsx_config } = require("../lib/exec");
+const sys_argv = parse_args(process.argv.slice(2));
+if (!sys_argv.node_name) sys_argv.node_name = "log";
+const xlsx_config = get_xlsx_config(sys_argv,process.env);
 
 
 const LOG_HEAD=Buffer.of(0x0B,0x00,0xB1,0xE5);
@@ -19,10 +23,10 @@ const LOG_CODE = {
 
 class TGO_LOG extends TGO {
     constructor() {
-        super("log", "/home/tamago/cmc_ws/xml/BookLog.xlsx");
+        super(sys_argv, xlsx_config);
         // update the received variables in a single list
         this.loadSubscribers();
-        // Create a global json containing informations on all logged topics
+        // Create a global p containing informations on all logged topics
         // their folder, creation date, last schema used, ...
     }
 
@@ -112,7 +116,7 @@ class TGO_LOG extends TGO {
     }
 
     prepareLoggedTopic(publisher,topicname,options) {
-        if (!Object.hasOwn(this.logged_topics, publisher))
+        if (!this.logged_topics[publisher])
             this.logged_topics[publisher] = {};
         this.logged_topics[publisher][topicname] = {options: options};
         const topic = this.logged_topics[publisher][topicname];
@@ -149,7 +153,7 @@ class TGO_LOG extends TGO {
             else logged_options.minRate = 0;
             if (logged_options.minSkipped) logged_options.minSkipped++;
             else logged_options.minSkipped = 1;
-            if (!Object.hasOwn(this.logged_topics, publisher))
+            if (!this.logged_topics[publisher])
                 this.logged_topics[publisher] = {};
             if (topicname === "+")
                 this.logged_topics[publisher][topicname] = {options: logged_options};
@@ -160,10 +164,10 @@ class TGO_LOG extends TGO {
     }
 
     _getTopic(publisher,topicname) {
-        if (!Object.hasOwn(this.logged_topics,publisher)) return;
+        if (!this.logged_topics[publisher]) return;
         const logged_publisher = this.logged_topics[publisher];
-        if (!Object.hasOwn(logged_publisher,topicname)) {
-            if (!Object.hasOwn(logged_publisher,"+")) return;
+        if (!logged_publisher[topicname]) {
+            if (!logged_publisher["+"]) return;
             this.prepareLoggedTopic(publisher,topicname,logged_publisher["+"].options);
         }
         return logged_publisher[topicname];
