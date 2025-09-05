@@ -1,6 +1,7 @@
-const TGO = require("../lib/tgo");
+ const TGO = require("../lib/tgo");
 const { load_worksheet, load_json, combine_sheets, ProtocolBuffer, parse_protocol_buffer_schema, parse_callback } = require("../lib/utils");
 const slmp = require("/home/tamago/cmc_ws/cmc_melsec/index");
+
 
 const SLMP_TO_PB = {
     BOOL: "bool",
@@ -14,33 +15,27 @@ const SLMP_TO_PB = {
     wstring: "string"
 };
 
-/*
-const options = load_worksheet("/home/tamago/cmc_ws/xml/Book2.xlsx");
-combine_sheets(options.slmp, load_worksheet("/home/tamago/cmc_ws/xml/Book1.xlsx"));
-const variables = slmp.Utils.parseAllVariables(load_json(options.slmp.path,options.slmp.type,options.slmp.labels));
-const rd = slmp.Utils.parseRules(variables,options.slmp.read,"read");
-const wr = slmp.Utils.parseRules(variables,options.slmp.write,"write");
-
-async function read(trigger) {
-	for (let rule of rules[trigger].cmd) await rule.cmd({client:client},rule.args);
-}
-*/
 
 class TGO_SLMP extends TGO {
     constructor() {
         super("slmp", "/home/tamago/cmc_ws/xml/Book1.xlsx");
         // update the received variables in a single list
         this.loadVariables();
-        this.loadClient();
         this.loadReads();
         this.loadWrites();
+        this.loadClient();
     }
-    connect() {
-        this.client.connect();
-        super.connect();
+    start() {
+        for (const reads of Object.values(this.reads)) for (const read of reads.cmd)
+            read.buffer = read.cmd.init(this,read.args);
+        for (const publisher of Object.values(this.writes)) for (const writes of Object.values(publisher)) for (const write of writes.cmd)
+            write.buffer = write.cmd.init(this,write.args);
+        super.start();
     }
     loadClient() {
         this.client = new slmp.Advanced.SLMP_Advanced(this.options.slmp);
+        this.client.on("ready", () => this.start());
+        this.client.connect();
     }
     loadVariables() {
         this.variables = slmp.Utils.parseAllVariables(load_json(this.options.slmp.path,this.options.slmp.type,this.options.slmp.labels));
@@ -90,26 +85,39 @@ class TGO_SLMP extends TGO {
                 topic.callback = parse_callback(
                     this.options.slmp.write.find((conv)=>(conv.topicname===topicname && conv.publisher===publisher)).callback,
                     ["self","publisher","topic","message"] );
-                this.subscribe(publisher,topicname);
+                this.subscribe(publisher,topicname,{options:topic.options});
             }
         }
     }
 
-    runInterval(rate) {
-        const interval = this.intervals[rate];
-        for (const topic of interval.topics)
-            this.publishData(topic);
+    // TODO : Fix this interval to work without "setInterval", cause it sucks hard
+    async runInterval(interval, rate) {
+        await new Promise((resolve) => {
+            let waiting = interval.topics.length;
+            if (waiting<1) return resolve();
+            for (const topic of interval.topics)
+                this.publishData(topic).finally(()=>{if(--waiting<1)resolve();});
+        });
+        //for (const topic of interval.topics) await this.publishData(topic);
     }
 
     async preparePublishData(topicname, args={}) {
         const reads = this.reads[topicname];
-        for (const read of reads.cmd)
-            await read.cmd(this,read.args);
-        console.log(topicname + " : server");
+        await new Promise((resolve) => {
+            let waiting = reads.cmd.length;
+            if (waiting<1) return resolve();
+            for (const read of reads.cmd)
+                this.client.sendRead(read.buffer).then(
+                        // TODO : Put a try catch here, if "recv" fails i may fuck this up
+                        response => read.cmd.recv(this,read.buffer,response,read.args),
+                        // TODO : Do some error management here, like this is pointless
+                        error => console.log(error)).finally(()=>{if(--waiting<1)resolve();});
+        });
+        //console.log(topicname + " : server");
         // TODO : Add support for structures and array
         for (const variable of reads.variables)
             reads.protobuf.data[variable.meta.name] = variable.data[0];
-        console.log(topicname + " : data");
+        //console.log(topicname + " : data");
         return reads.protobuf.data;
     }
 
@@ -121,9 +129,19 @@ class TGO_SLMP extends TGO {
             conv.cmd(data,writes.data);
         for (const variable of writes.variables)
             variable.data[0] = writes.data[variable.meta.name];
-        for (const write of writes.cmd)
-            await write.cmd(this,write.args);
+        await new Promise((resolve) => {
+            let waiting = writes.cmd.length;
+            if (waiting<1) return resolve();
+            for (const write of writes.cmd)
+                write.cmd.send(this,write.buffer,write.args).then(
+                        // TODO : Put a try catch here, if "recv" fails i may fuck this up
+                        response => this.client.recvWrite(write.buffer,response),
+                        // TODO : Do some error management here, like this is pointless
+                        error => console.log(error)).finally(()=>{if(--waiting<1)resolve();});
+        });
     }
 }
 
 module.exports = TGO_SLMP;
+
+test = new TGO_SLMP();

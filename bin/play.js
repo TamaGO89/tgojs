@@ -1,13 +1,13 @@
 const TGO = require("../lib/tgo");
-const { load_worksheet, load_json, write_json, combine_sheets, ProtocolBuffer, load_schema_codecs, parse_protocol_buffer_schema, parse_callback } = require("../lib/utils");
+const { load_worksheet, load_json, write_json, combine_sheets, ProtocolBuffer, parse_protocol_buffer_schema, parse_callback } = require("../lib/utils");
 const fs = require('fs');
 const xxhash = require("xxhashjs");
 const path = require("path");
 
 
-const LOG_HEAD=Buffer.of(0x0B,0x00,0xB1,0xE5);
-const LOG_BODY=Buffer.of(0x1B,0x00,0xB1,0xE5);
-const LOG_END=Buffer.of(0x2B,0x00,0xB1,0xE5);
+const LOG_HEAD=Buffer.of(0xBB,0x00,0xB1,0xE5);
+const LOG_BODY=Buffer.of(0xBB,0x00,0xB1,0xE5);
+const LOG_END=Buffer.of(0xBB,0x00,0xB1,0xE5);
 const LOG_CODE = {
     SCHEMA: Buffer.of(0x01),
     DURATION: Buffer.of(0x02),
@@ -46,22 +46,16 @@ class TGO_LOG extends TGO {
             fs.writeFileSync(`${topic.path.schema}/${topic.schema.filename}`, schema, 'utf8');
             topic.info.schema[hash] = topic.schema;
             write_json(topic.info,topic.path.info);
-            topic.info_timestamp = topic.timestamp;
         }
         topic.info.schema.last = hash;
         return true;
     }
 
     checkData(topic) {
-        if (!topic.logfile) return;
         if (topic.options.maxSize > 0 && topic.logdata.size >= topic.options.maxSize)
             return LOG_CODE.SIZE;
         if (topic.options.maxDuration > 0 && (topic.timestamp-topic.logdata.start) >= topic.options.maxDuration)
             return LOG_CODE.DURATION;
-        if (topic.timestamp - topic.info_timestamp > 600000) {
-            write_json(topic.info,topic.path.info);
-            topic.info_timestamp = topic.timestamp;
-        }
         return LOG_CODE.NONE;
     }
 
@@ -76,34 +70,29 @@ class TGO_LOG extends TGO {
             size: 0
         };
         if (topic.options.maxCounter > 0 && topic.info.logdata.length >= topic.options.maxCounter) {
-            try {
-                const old_topic = topic.info.logdata.shift();
-                const old_schema = topic.info.schema[old_topic.schema];
-                fs.unlinkSync(`${topic.path.data}/${old_topic.filename}`);
-                if (--old_schema.counter <= 0) {
-                    delete topic.info.schema[old_topic.schema];
-                    fs.unlinkSync(`${topic.path.schema}/${old_schema.filename}`);
-                }
-            } catch (e) { console.error(e); }
+            const old_topic = topic.info.logdata.shift();
+            const old_schema = topic.info.schema[old_topic.schema];
+            fs.unlink(`${topic.path.data}/${old_topic.filename}`);
+            if (--old_schema.counter <= 0) {
+                delete topic.info.schema[old_topic.schema];
+                fs.unlink(`${topic.path.schema}/${old_schema.filename}`);
+            }
         }
         topic.schema.counter++;
         topic.info.logdata.push(topic.logdata);
         this.writeLogFile(topic,Buffer.from(topic.info.schema.last),LOG_HEAD);
         write_json(topic.info,topic.path.info);
-        topic.info_timestamp = topic.timestamp;
     }
 
     closeLogFile(topic,reason) {
         if (!topic.logfile) return;
         this.writeLogFile(topic,reason,LOG_END);
-        fs.close(topic.logfile);
-        delete topic.logfile;
+        topic.logfile.end();
         topic.logdata.end = topic.timestamp;
         topic.logdata.code = reason[0];
     }
 
     writeLogFile(topic,data,header) {
-        if (!topic.logfile) return;
         topic.bufferheader.writeBigUInt64LE(BigInt(topic.timestamp),0);
         topic.bufferheader.writeUInt32LE(data.length,8);
         fs.writeSync(topic.logfile, Buffer.concat([header,topic.bufferheader,data]));
@@ -120,7 +109,6 @@ class TGO_LOG extends TGO {
         topic.path = {main: main_path, data: main_path+"/data", schema: main_path+"/schema", info: main_path+"/info.json"};
         if (fs.existsSync(topic.path.info)) {
             topic.info = load_json(topic.path.info);
-            delete topic.info.schema.last;
         } else {
             topic.info = {
                 publisher: publisher,
@@ -130,12 +118,11 @@ class TGO_LOG extends TGO {
                 start: Date.now()
             };
             fs.mkdirSync(topic.path.data,{recursive:true});
-            fs.mkdirSync(topic.path.schema,{recursive:true} );
+            fs.mkdirSync(topic.path.schema );
             write_json(topic.info,topic.path.info);
         }
         topic.skipped = 0;
         topic.timestamp = topic.info.start;
-        topic.info_timestamp = topic.timestamp;
         topic.bufferheader = Buffer.allocUnsafe(12);
     }
 
@@ -182,15 +169,12 @@ class TGO_LOG extends TGO {
             this.closeLogFile(topic,LOG_CODE.SCHEMA);
             this.openLogFile(topic);
         } else if (datatype === "data" && topic.schema) {
-            topic.skipped = (topic.skipped+1) % topic.options.minSkipped;
-            if (topic.skipped>0) return;
+            if ((++topic.skipped%topic.options.minSkipped)>0) return;
             if ((timestamp-topic.timestamp)<topic.options.minRate) return;
-            //console.log(`logging ${topicpath}`);
+            console.log(`logging ${topicpath}`);
             topic.timestamp = timestamp;
-            // TODO : Can't do this at each loop, just put this in an interval and check every minute or two
-            // any closeLogFile operation should reset this reason_code
             const reason_code = this.checkData(topic);
-            if (reason_code.length > 0) {
+            if (reason_code > 0) {
                 console.log(`rotating logfile with reason ${reason_code[0]}`);
                 this.closeLogFile(topic,reason_code);
                 this.openLogFile(topic);
@@ -200,101 +184,4 @@ class TGO_LOG extends TGO {
     }
 }
 
-
-function _parse(buffer,offset) {
-    const timestamp = Number(buffer.readBigUInt64LE(offset+4));
-    const size = buffer.readUInt32LE(offset+12);
-    return {
-        timestamp: timestamp, size: size,
-        data: buffer.slice(offset+16,offset+16+size)
-    }
-}
-
-function parse(logpath,publisher,topicname) {
-    const logfullpath = `${logpath}/${publisher}/${topicname}`;
-    const log = {
-        info: JSON.parse(fs.readFileSync(logfullpath+"/info.json")),
-        schema: {},
-        logdata: []
-    };
-    console.log("info loaded:");
-    console.log(log.info);
-    for (const [key,val] of Object.entries(log.info.schema)) {
-        if (key==="last") continue;
-        log.schema[key] = {
-            source: fs.readFileSync(logfullpath+"/schema/"+val.filename).toString()
-        };
-        log.schema[key].decoder = load_schema_codecs(parse_protocol_buffer_schema(log.schema[key].source),topicname).decoder;
-    }
-    log.schema.last = log.schema[log.info.schema.last];
-    console.log("schema loaded:");
-    console.log(Object.keys(log.info.schema));
-    for (const val of log.info.logdata) {
-        const logdata = {source: fs.readFileSync(logfullpath+"/data/"+val.filename), data: []};
-        let offset = 0;
-        let error = false;
-        while (offset + 16 < logdata.source.length) {
-            const header = logdata.source.slice(offset,offset+4);
-            if (header.equals(LOG_HEAD)) {
-                error = false;
-                payload = _parse(logdata.source,offset);
-                logdata.schema = log.schema[payload.data.toString()];
-                offset += 16+payload.size;
-            } else if (header.equals(LOG_BODY)) {
-                if (error) {
-                    console.log("recovered from header error");
-                    console.log(offset);
-                    console.log(logdata.source.slice(Math.max(0,offset-20),offset+60));
-                    error = false;
-                }
-                payload = _parse(logdata.source,offset);
-                try {
-                    payload.data = logdata.schema.decoder(payload.data);
-                    logdata.data.push(payload);
-                } catch (e) {
-                    console.log(e);
-                    console.log(offset);
-                    console.log(payload.size);
-                    console.log(logdata.source.slice(offset,offset+16+payload.size));
-                }
-                offset += 16+payload.size;
-            } else if (header.equals(LOG_END)) {
-                payload = _parse(logdata.source,offset);
-                offset += 16+payload.size;
-            } else {
-                if (!error) {
-                    console.log("header don't match");
-                    console.log(offset);
-                    console.log(logdata.source.slice(Math.max(0,offset-20),offset+60));
-                    error = true;
-                }
-                offset++;
-            }
-        }
-        log.logdata.push(logdata);
-    }
-    return log;
-}
-
-function save_parsed(source,logpath,publisher,topicname) {
-    const logfullpath = `${logpath}/${publisher}/${topicname}/parsed.json`;
-    const parsed = [];
-    for (const logdata of source.logdata)
-        parsed.push(...logdata.data);
-    const sorted = parsed.sort(d=>d.timestamp);
-    fs.writeFileSync(logfullpath,JSON.stringify(sorted,null,4));
-}
-function parse_all(logpath) {
-    for (const publisher of fs.readdirSync(logpath)) {
-        for (const topicname of fs.readdirSync(`${logpath}/${publisher}`)) {
-            const parsed = parse (logpath,publisher,topicname);
-            save_parsed(parsed,logpath,publisher,topicname);
-        }
-    }
-}
-
 module.exports = TGO_LOG;
-
-test = new TGO_LOG();
-test.connect();
-test.start();

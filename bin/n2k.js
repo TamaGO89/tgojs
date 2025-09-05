@@ -73,17 +73,16 @@ class TGO_N2K extends TGO {
         this.client.on("data",(data)=>{this.onData(data);});
     }
 
-    connect() {
+    onConnect() {
         this.client.connect();
-        super.connect();
+        super.onConnect();
     }
 
-    runInterval(rate) {
-        const interval = this.intervals[rate];
+    async runInterval(interval, rate) {
         for (const pgn of interval.pgns)
             this.client.send(this.trns_pgns[pgn]);
         for (const topicname of interval.topics)
-            this.publishData(topicname)
+            this.publishData(topicname);
     }
 
     loadReceives() {
@@ -133,7 +132,7 @@ class TGO_N2K extends TGO {
         );
         for (const topic of Object.values(this.pub_topics)) {
             topic.protobuf.loadSchema(this.reads_schema);
-            this.advertise(topic.protobuf.name,topic.protobuf.schema,topic.protobuf.encoder,{options: topic.options});
+            this.advertise(topic.protobuf.name,topic.protobuf.schema,topic.protobuf.encoder,{options:topic.options});
         }
     }
 
@@ -181,7 +180,7 @@ class TGO_N2K extends TGO {
             this.intervals[options.rate].pgns.push(pgn_info.Id);
         }
         for (const sub of this.options.n2k.subscribe)
-            this.subscribe(sub.publisher,sub.topicname,{args: undefined});
+            this.subscribe(sub.publisher,sub.topicname,{options:sub.options});
     }
 
     onData(data) {
@@ -201,7 +200,6 @@ class TGO_N2K extends TGO {
         }
     }
 
-    
     async preparePublishData(topicname, args={}) {
         return this.pub_topics[topicname].protobuf.data;
     }
@@ -218,3 +216,7 @@ class TGO_N2K extends TGO {
 }
 
 module.exports = TGO_N2K;
+
+test = new TGO_N2K();
+test.connect();
+test.start();
